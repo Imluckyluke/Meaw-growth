@@ -16,7 +16,7 @@ API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
 SESSION_STRING = os.environ["SESSION_STRING"]
 GROUP_CHAT_ID = int(os.environ["GROUP_CHAT_ID"])   # گروهی که "شهر میویی" می‌فرستیم
-MEOWIE_BOT = 8024943840
+MEOWIE_BOT = "@MeowieQBot"  # username for entity resolution
 INTERVAL_HOURS = float(os.environ.get("INTERVAL_HOURS", "1"))
 
 DATA_DIR = "data"
@@ -101,22 +101,24 @@ def parse_leaderboard_meo(text: str, lb_type: str) -> list[dict]:
 
 
 def parse_city(text: str) -> dict:
-    """Parse شهر میویی reply."""
+    """Parse شهر میویی reply. Numbers may be wrapped in backticks."""
     d = {"timestamp": now_str()}
+    # Match number with optional backtick wrapping
+    NUM = r"`?([\d,٬]+)`?"
 
-    m = re.search(r"میو میو ها\s*:\s*([\d,٬]+)", text)
+    m = re.search(r"میو میو ها\s*:\s*" + NUM, text)
     if m:
         d["meo_meo"] = parse_number(m.group(1))
 
-    m = re.search(r"جمعیت\s*:\s*([\d,٬]+)", text)
+    m = re.search(r"جمعیت\s*:\s*" + NUM, text)
     if m:
         d["population"] = parse_number(m.group(1))
 
-    m = re.search(r"ماهی ها\s*:\s*([\d,٬]+)", text)
+    m = re.search(r"ماهی ها\s*:\s*" + NUM, text)
     if m:
         d["fish"] = parse_number(m.group(1))
 
-    m = re.search(r"خزانه\s*:\s*([\d,٬]+)", text)
+    m = re.search(r"خزانه\s*:\s*" + NUM, text)
     if m:
         d["treasury"] = parse_number(m.group(1))
 
@@ -270,6 +272,15 @@ async def main():
     await client.start()
     me = await client.get_me()
     logger.info(f"Logged in as: {me.username or me.id}")
+
+    # Pre-resolve bot entity so numeric ID works later
+    global MEOWIE_BOT
+    try:
+        bot_entity = await client.get_entity(MEOWIE_BOT)
+        MEOWIE_BOT = bot_entity
+        logger.info(f"Bot entity resolved: {bot_entity.id}")
+    except Exception as e:
+        logger.warning(f"Could not pre-resolve bot entity: {e}")
 
     # Listen for "امار پیشی" in Saved Messages
     @client.on(events.NewMessage(from_users="me", pattern=r"(?i)امار پیشی"))
