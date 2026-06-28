@@ -16,7 +16,7 @@ API_ID = int(os.environ["API_ID"])
 API_HASH = os.environ["API_HASH"]
 SESSION_STRING = os.environ["SESSION_STRING"]
 GROUP_CHAT_ID = int(os.environ["GROUP_CHAT_ID"])   # گروهی که "شهر میویی" می‌فرستیم
-MEOWIE_BOT = "@MeowieeQ"
+MEOWIE_BOT = 8024943840
 INTERVAL_HOURS = float(os.environ.get("INTERVAL_HOURS", "1"))
 
 DATA_DIR = "data"
@@ -226,21 +226,23 @@ async def do_city(client):
     logger.info("Starting city cycle...")
 
     sent = await client.send_message(GROUP_CHAT_ID, "شهر میویی")
-    await asyncio.sleep(5)
+    await asyncio.sleep(8)
 
-    # Get reply in the group
-    async for msg in client.iter_messages(GROUP_CHAT_ID, limit=10):
+    found = False
+    async for msg in client.iter_messages(GROUP_CHAT_ID, limit=20):
         if msg.reply_to_msg_id == sent.id:
             city_text = msg.text or msg.raw_text
+            logger.info(f"City raw text: {city_text[:200] if city_text else chr(39)+'None'+chr(39)}")
             record = parse_city(city_text)
             logger.info(f"City data: {record}")
-
             all_city = load_json(CITY_FILE)
             all_city.append(record)
             save_json(CITY_FILE, all_city)
+            found = True
             break
-    else:
-        logger.warning("No reply to 'شهر میویی' found in group.")
+
+    if not found:
+        logger.warning("No reply to chr(39)+'شهر میویی'+chr(39)+' found in group.")
 
 
 # ─── STATS COMMAND ─────────────────────────────────────────────────────────────
