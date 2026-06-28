@@ -466,17 +466,23 @@ async def main():
     except Exception as e:
         logger.warning(f"Could not pre-resolve bot entity: {e}")
 
-    # Listen for "امار پیشی" in Saved Messages
-    @client.on(events.NewMessage(from_users="me", pattern=r"(?i)امار پیشی"))
+    # "امار پیشی" — Saved Messages (خودم) + گروه هدف (همه)
+    @client.on(events.NewMessage(pattern=r"(?i)امار پیشی"))
     async def stats_handler(event):
-        if event.is_private and event.message.peer_id.user_id == me.id:
-            await send_stats(client, me.id)
+        chat_id = event.chat_id
+        is_saved = event.is_private and hasattr(event.message.peer_id, "user_id") and event.message.peer_id.user_id == me.id
+        is_group = chat_id == GROUP_CHAT_ID
+        if is_saved or is_group:
+            await send_stats(client, chat_id)
 
-    # Listen for "مقایسه" in Saved Messages
-    @client.on(events.NewMessage(from_users="me", pattern=r"(?i)مقایسه"))
+    # "مقایسه" — Saved Messages + گروه (همه)
+    @client.on(events.NewMessage(pattern=r"(?i)مقایسه"))
     async def compare_handler(event):
-        if event.is_private and event.message.peer_id.user_id == me.id:
-            await send_compare(client, me.id)
+        chat_id = event.chat_id
+        is_saved = event.is_private and hasattr(event.message.peer_id, "user_id") and event.message.peer_id.user_id == me.id
+        is_group = chat_id == GROUP_CHAT_ID
+        if is_saved or is_group:
+            await send_compare(client, chat_id)
 
     async def cycle():
         while True:
