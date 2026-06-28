@@ -63,15 +63,13 @@ def parse_leaderboard_meo(text: str, lb_type: str) -> list[dict]:
         return groups
     NUM = r"`?([\d,٬]+)`?"
     # Split by medal emoji lines
-    blocks = re.split(r"
-(?=[🥇🥈🥉🎖🏅])", text)
+    blocks = re.split("\\n(?=[🥇🥈🥉🎖🏅])", text)
     for block in blocks:
         if not block.strip():
             continue
         g = {"type": lb_type, "timestamp": now_str()}
 
-        first_line = block.strip().split("
-")[0]
+        first_line = block.strip().split("\n")[0]
         g["group_raw"] = first_line.strip()
 
         m = re.search(r"میو میو ها\s*:\s*" + NUM, block)
