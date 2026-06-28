@@ -278,6 +278,178 @@ async def send_stats(client, chat_id):
     logger.info(f"Sent {len(files)} files to {chat_id}")
 
 
+
+# ─── COMPARE COMMAND ───────────────────────────────────────────────────────────
+def calc_slope(values: list) -> float | None:
+    """
+    Linear regression slope.
+    چون هر نمونه = 1 ساعت، slope = تغییر به ازای هر ساعت.
+    """
+    n = len(values)
+    if n < 2:
+        return None
+    xs = list(range(n))
+    x_mean = sum(xs) / n
+    y_mean = sum(values) / n
+    num = sum((x - x_mean) * (y - y_mean) for x, y in zip(xs, values))
+    den = sum((x - x_mean) ** 2 for x in xs)
+    return num / den if den else None
+
+
+def hours_to_reach(current, target, my_slope, their_slope):
+    gap = (target or 0) - (current or 0)
+    if gap <= 0:
+        return 0.0
+    net = (my_slope or 0) - (their_slope or 0)
+    if net <= 0:
+        return float("inf")
+    return gap / net
+
+
+def fmt_eta(hours) -> str:
+    if hours == 0:
+        return "قبلاً رسیده! 🎉"
+    if hours == float("inf") or hours is None:
+        return "با شیب فعلی نمیرسه ❌"
+    days = hours / 24
+    if hours < 1:
+        return f"{hours*60:.0f} دقیقه دیگه"
+    if days < 1:
+        return f"{hours:.1f} ساعت دیگه"
+    if days < 30:
+        return f"{days:.1f} روز دیگه ({hours:.0f} ساعت)"
+    months = days / 30
+    return f"{months:.1f} ماه دیگه ({days:.0f} روز)"
+
+
+
+def fmt_num(n) -> str:
+    if n is None:
+        return "—"
+    return f"{int(n):,}"
+
+
+
+async def send_compare(client, chat_id):
+    lb_data = load_json(LEADERBOARD_FILE)
+    city_data = load_json(CITY_FILE)
+
+    if not city_data:
+        await client.send_message(chat_id, "❌ داده شهر کافی نیست.")
+        return
+
+    n_samples = len(city_data)
+    n_hours = n_samples  # هر نمونه = 1 ساعت
+
+    # ── محاسبه شیب شهر ──────────────────────────────────────────────────────────
+    city_slopes = {}
+    city_current = {}
+    for key in ("meo_meo", "population", "fish", "treasury"):
+        vals = [r[key] for r in city_data if key in r]
+        city_slopes[key] = calc_slope(vals)
+        city_current[key] = vals[-1] if vals else None
+
+    lines = [
+        f"📊 **تحلیل رشد** ({n_samples} نمونه = ~{n_hours} ساعت داده)\n",
+        "━━━━━━━━━━━━━━━━━━━━",
+        "🏰 **شهر پیشی — رشد هر ساعت**",
+    ]
+
+    param_meta = [
+        ("meo_meo",    "🐾 میو میو"),
+        ("population", "🐈 جمعیت"),
+        ("fish",       "🎣 ماهی"),
+        ("treasury",   "🏦 خزانه"),
+    ]
+    for key, label in param_meta:
+        cur = city_current.get(key)
+        sl = city_slopes.get(key)
+        total_change = (sl * n_hours) if sl is not None and n_samples >= 2 else None
+        sl_str = f"+{sl:,.1f}/h" if sl and sl >= 0 else (f"{sl:,.1f}/h" if sl is not None else "ناکافی")
+        total_str = f"(+{total_change:,.0f} در {n_hours}h)" if total_change is not None else ""
+        lines.append(f"  {label}: {fmt_num(cur)}  ←  {sl_str} {total_str}")
+
+    # ── لیدربرد میو میو ──────────────────────────────────────────────────────────
+    meo_records = [r for r in lb_data if r.get("type") == "meo_meo"]
+    if meo_records:
+        lines.append("\n━━━━━━━━━━━━━━━━━━━━")
+        lines.append("🐾 **لیدربرد میو میو — رشد هر گروه**")
+
+        # گروه‌بندی بر اساس رتبه (group_raw شامل 🥇🥈... هست)
+        groups: dict = {}
+        for r in meo_records:
+            raw = r.get("group_raw", "")
+            # کلید = بخش بعد از : (اسم گروه)
+            key_name = raw.split(":")[-1].strip() if ":" in raw else raw.strip()
+            key_name = key_name[:35]
+            if key_name not in groups:
+                groups[key_name] = {"meo_meo": [], "population": [], "treasury": []}
+            for p in ("meo_meo", "population", "treasury"):
+                if p in r:
+                    groups[key_name][p].append(r[p])
+
+        for gname, gvals in list(groups.items())[:5]:
+            meo_vals = gvals["meo_meo"]
+            meo_cur = meo_vals[-1] if meo_vals else None
+            meo_sl = calc_slope(meo_vals)
+            meo_sl_str = f"+{meo_sl:,.1f}/h" if meo_sl and meo_sl >= 0 else (f"{meo_sl:,.1f}/h" if meo_sl else "ناکافی")
+            n_g = len(meo_vals)
+            total_g = (meo_sl * n_g) if meo_sl and n_g >= 2 else None
+            total_g_str = f"(+{total_g:,.0f} در {n_g}h)" if total_g else ""
+            lines.append(f"  📌 {gname}")
+            lines.append(f"    🐾 میو: {fmt_num(meo_cur)}  ←  {meo_sl_str} {total_g_str}")
+
+        # ── مقایسه شهر با رتبه اول لیدربرد ─────────────────────────────────────
+        first_group = list(groups.values())[0] if groups else None
+        if first_group and city_current.get("meo_meo") is not None:
+            fg_meo_vals = first_group["meo_meo"]
+            fg_cur = fg_meo_vals[-1] if fg_meo_vals else None
+            fg_sl = calc_slope(fg_meo_vals)
+            my_cur = city_current["meo_meo"]
+            my_sl = city_slopes["meo_meo"]
+            eta = hours_to_reach(my_cur, fg_cur or 0, my_sl or 0, fg_sl or 0)
+            lines.append("\n━━━━━━━━━━━━━━━━━━━━")
+            lines.append("🏁 **شهر vs رتبه ۱ لیدربرد میو میو**")
+            lines.append(f"  شهر:    {fmt_num(my_cur)} میو  ({'+' if (my_sl or 0) >= 0 else ''}{(my_sl or 0):,.1f}/h)")
+            lines.append(f"  رتبه ۱: {fmt_num(fg_cur)} میو  ({'+' if (fg_sl or 0) >= 0 else ''}{(fg_sl or 0):,.1f}/h)")
+            lines.append(f"  فاصله: {fmt_num((fg_cur or 0) - my_cur)} میو")
+            lines.append(f"  ⏱ ETA: **{fmt_eta(eta)}**")
+
+    # ── لیدربرد بازار ماهی ───────────────────────────────────────────────────────
+    fish_records = [r for r in lb_data if r.get("type") == "fish_market"]
+    if fish_records and city_current.get("fish") is not None:
+        fish_groups: dict = {}
+        for r in fish_records:
+            raw = r.get("group_raw", "")
+            key_name = raw.split(":")[-1].strip() if ":" in raw else raw.strip()
+            key_name = key_name[:35]
+            if key_name not in fish_groups:
+                fish_groups[key_name] = {"fish": [], "meo_meo": [], "population": []}
+            for p in ("fish", "meo_meo", "population"):
+                if p in r:
+                    fish_groups[key_name][p].append(r[p])
+
+        first_fish = list(fish_groups.values())[0] if fish_groups else None
+        if first_fish:
+            ff_vals = first_fish["fish"]
+            ff_cur = ff_vals[-1] if ff_vals else None
+            ff_sl = calc_slope(ff_vals)
+            my_cur = city_current["fish"]
+            my_sl = city_slopes["fish"]
+            eta = hours_to_reach(my_cur, ff_cur or 0, my_sl or 0, ff_sl or 0)
+            lines.append("\n━━━━━━━━━━━━━━━━━━━━")
+            lines.append("🏁 **شهر vs رتبه ۱ بازار ماهی**")
+            lines.append(f"  شهر:    {fmt_num(my_cur)} ماهی  ({'+' if (my_sl or 0) >= 0 else ''}{(my_sl or 0):,.1f}/h)")
+            lines.append(f"  رتبه ۱: {fmt_num(ff_cur)} ماهی  ({'+' if (ff_sl or 0) >= 0 else ''}{(ff_sl or 0):,.1f}/h)")
+            lines.append(f"  فاصله: {fmt_num((ff_cur or 0) - my_cur)} ماهی")
+            lines.append(f"  ⏱ ETA: **{fmt_eta(eta)}**")
+
+    msg = "\n".join(lines)
+    if len(msg) > 4000:
+        msg = msg[:4000] + "\n\n..."
+    await client.send_message(chat_id, msg, parse_mode="md")
+    logger.info("Compare sent.")
+
 # ─── MAIN LOOP ─────────────────────────────────────────────────────────────────
 async def main():
     client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
@@ -299,6 +471,12 @@ async def main():
     async def stats_handler(event):
         if event.is_private and event.message.peer_id.user_id == me.id:
             await send_stats(client, me.id)
+
+    # Listen for "مقایسه" in Saved Messages
+    @client.on(events.NewMessage(from_users="me", pattern=r"(?i)مقایسه"))
+    async def compare_handler(event):
+        if event.is_private and event.message.peer_id.user_id == me.id:
+            await send_compare(client, me.id)
 
     async def cycle():
         while True:
