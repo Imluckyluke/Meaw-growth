@@ -55,43 +55,42 @@ def parse_number(s: str) -> int | None:
 # ─── PARSERS ───────────────────────────────────────────────────────────────────
 def parse_leaderboard_meo(text: str, lb_type: str) -> list[dict]:
     """
-    Parse leaderboard messages for 'میو میو' and 'بازار ماهی' types.
-    Returns list of group dicts.
+    Parse leaderboard messages for میو میو and بازار ماهی types.
+    Numbers may be wrapped in backticks.
     """
     groups = []
-    # Split by medal lines (🥇 🥈 🥉 🎖 🏅)
-    blocks = re.split(r"\n(?=[🥇🥈🥉🎖🏅])", text)
+    if not text:
+        return groups
+    NUM = r"`?([\d,٬]+)`?"
+    # Split by medal emoji lines
+    blocks = re.split(r"
+(?=[🥇🥈🥉🎖🏅])", text)
     for block in blocks:
         if not block.strip():
             continue
         g = {"type": lb_type, "timestamp": now_str()}
 
-        # Group name: first line after medal emoji
-        first_line = block.strip().split("\n")[0]
+        first_line = block.strip().split("
+")[0]
         g["group_raw"] = first_line.strip()
 
-        # میو میو
-        m = re.search(r"میو میو ها\s*:\s*([\d,٬]+)", block)
+        m = re.search(r"میو میو ها\s*:\s*" + NUM, block)
         if m:
             g["meo_meo"] = parse_number(m.group(1))
 
-        # جمعیت
-        m = re.search(r"جمعیت\s*:\s*([\d,٬]+)", block)
+        m = re.search(r"جمعیت\s*:\s*" + NUM, block)
         if m:
             g["population"] = parse_number(m.group(1))
 
-        # خزانه
-        m = re.search(r"دارایی خزانه\s*:\s*([\d,٬]+)", block)
+        m = re.search(r"دارایی خزانه\s*:\s*" + NUM, block)
         if m:
             g["treasury"] = parse_number(m.group(1))
 
-        # ماهی
-        m = re.search(r"ماهی ها\s*:\s*([\d,٬]+)", block)
+        m = re.search(r"ماهی ها\s*:\s*" + NUM, block)
         if m:
             g["fish"] = parse_number(m.group(1))
 
-        # رتبه گروه
-        m = re.search(r"رتبه گروه\s*:\s*([\d,٬]+)", block)
+        m = re.search(r"رتبه گروه\s*:\s*" + NUM, block)
         if m:
             g["group_rank"] = parse_number(m.group(1))
 
@@ -149,74 +148,89 @@ async def get_updated_message(client, chat, msg_id):
 async def do_leaderboard(client):
     logger.info("Starting leaderboard cycle...")
 
-    # 1) Send "لیدربرد" to @MeowieeQ
+    # 1) Send "لیدربرد"
     sent = await client.send_message(MEOWIE_BOT, "لیدربرد")
-    await asyncio.sleep(4)
+    await asyncio.sleep(5)
 
-    # 2) Get bot reply
+    # 2) Get bot reply (most recent message in DM that isn't ours)
+    me = await client.get_me()
+    bot_reply = None
     async for msg in client.iter_messages(MEOWIE_BOT, limit=5):
-        if msg.reply_to_msg_id == sent.id or (msg.id != sent.id and msg.from_id != (await client.get_me()).id):
+        if msg.id != sent.id:
             bot_reply = msg
             break
-    else:
-        logger.error("No reply from bot after 'لیدربرد'")
+    if not bot_reply:
+        logger.error("No reply from bot after لیدربرد")
         return
 
-    # Refresh
-    bot_reply = await get_updated_message(client, MEOWIE_BOT, bot_reply.id)
+    # Log all buttons on first reply
+    def log_buttons(msg, label):
+        if not msg.reply_markup:
+            logger.info(f"[{label}] NO BUTTONS")
+            return
+        for ri, row in enumerate(msg.reply_markup.rows):
+            for ci, btn in enumerate(row.buttons):
+                logger.info(f"[{label}] row={ri} col={ci} text={getattr(btn, 'text', '?')!r}")
 
-    # 3) Click second button (row 0, col 0 = right button = لیدربرد گروهی)
-    #    In RTL: visually right = first in array index? Let's click index 1 first
-    #    From screenshot: two buttons, right one = لیدربرد گروهی (col 1 in row 0)
-    logger.info("Clicking 'لیدربرد گروهی' (row=0, col=1)...")
+    log_buttons(bot_reply, "initial")
+
+    # 3) Click لیدربرد گروهی (row=0, col=1 = right button)
+    logger.info("Clicking لیدربرد گروهی (row=0, col=1)...")
     await bot_reply.click(0, 1)
-    await asyncio.sleep(4)
-    bot_reply = await get_updated_message(client, MEOWIE_BOT, bot_reply.id)
+    await asyncio.sleep(5)
 
-    # Now we have 5 buttons:
-    # Row 0: میو میو  (single)
-    # Row 1: خزانه | جمعیت
-    # Row 2: بازار ماهی (single)
-    # Row 3: بازگشت (red)
+    bot_reply = await get_updated_message(client, MEOWIE_BOT, bot_reply.id)
+    text = bot_reply.text or bot_reply.raw_text or ""
+    logger.info(f"After گروهی — text: {text[:80]}")
+    log_buttons(bot_reply, "after_gorouhi")
 
     all_lb_records = load_json(LEADERBOARD_FILE)
 
-    # ── 4) Click میو میو (row=0, col=0) ────────────────────────────────────────
-    logger.info("Clicking 'میو میو' (row=0, col=0)...")
+    # ── 4) Click میو میو ──────────────────────────────────────────────────────────
+    logger.info("Clicking میو میو (row=0, col=0)...")
     await bot_reply.click(0, 0)
-    await asyncio.sleep(4)
-    meo_msg = await get_updated_message(client, MEOWIE_BOT, bot_reply.id)
+    await asyncio.sleep(6)
 
-    records = parse_leaderboard_meo(meo_msg.text or meo_msg.raw_text, "meo_meo")
+    meo_msg = await get_updated_message(client, MEOWIE_BOT, bot_reply.id)
+    meo_text = meo_msg.text or meo_msg.raw_text or ""
+    logger.info(f"میو میو text: {meo_text[:200]}")
+    log_buttons(meo_msg, "after_meo")
+    records = parse_leaderboard_meo(meo_text, "meo_meo")
     logger.info(f"  Parsed {len(records)} groups for میو میو")
     all_lb_records.extend(records)
 
-    # Click back button
-    back_msg = await get_updated_message(client, MEOWIE_BOT, bot_reply.id)
-    # Back button is last row
-    back_markup = back_msg.reply_markup
-    if back_markup:
-        last_row = len(back_markup.rows) - 1
-        logger.info("Clicking back...")
-        await back_msg.click(last_row, 0)
-        await asyncio.sleep(3)
-        bot_reply = await get_updated_message(client, MEOWIE_BOT, bot_reply.id)
+    # Click back
+    meo_msg = await get_updated_message(client, MEOWIE_BOT, bot_reply.id)
+    log_buttons(meo_msg, "back_btn")
+    if meo_msg.reply_markup:
+        last_row = len(meo_msg.reply_markup.rows) - 1
+        logger.info(f"Clicking back (row={last_row}, col=0)...")
+        await meo_msg.click(last_row, 0)
+        await asyncio.sleep(4)
 
-    # ── 5) Click بازار ماهی (row=2, col=0) ─────────────────────────────────────
-    logger.info("Clicking 'بازار ماهی' (row=2, col=0)...")
+    bot_reply = await get_updated_message(client, MEOWIE_BOT, bot_reply.id)
+    text = bot_reply.text or bot_reply.raw_text or ""
+    logger.info(f"After back — text: {text[:80]}")
+    log_buttons(bot_reply, "after_back")
+
+    # ── 5) Click بازار ماهی ───────────────────────────────────────────────────────
+    logger.info("Clicking بازار ماهی (row=2, col=0)...")
     await bot_reply.click(2, 0)
-    await asyncio.sleep(4)
-    fish_msg = await get_updated_message(client, MEOWIE_BOT, bot_reply.id)
+    await asyncio.sleep(6)
 
-    records = parse_leaderboard_meo(fish_msg.text or fish_msg.raw_text, "fish_market")
+    fish_msg = await get_updated_message(client, MEOWIE_BOT, bot_reply.id)
+    fish_text = fish_msg.text or fish_msg.raw_text or ""
+    logger.info(f"بازار ماهی text: {fish_text[:200]}")
+    log_buttons(fish_msg, "after_fish")
+    records = parse_leaderboard_meo(fish_text, "fish_market")
     logger.info(f"  Parsed {len(records)} groups for بازار ماهی")
     all_lb_records.extend(records)
 
-    # Click back
-    back_msg = await get_updated_message(client, MEOWIE_BOT, bot_reply.id)
-    if back_msg and back_msg.reply_markup:
-        last_row = len(back_msg.reply_markup.rows) - 1
-        await back_msg.click(last_row, 0)
+    # Click back (cleanup)
+    fish_msg = await get_updated_message(client, MEOWIE_BOT, bot_reply.id)
+    if fish_msg and fish_msg.reply_markup:
+        last_row = len(fish_msg.reply_markup.rows) - 1
+        await fish_msg.click(last_row, 0)
         await asyncio.sleep(3)
 
     save_json(LEADERBOARD_FILE, all_lb_records)
