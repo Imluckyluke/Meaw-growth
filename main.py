@@ -5,6 +5,7 @@ import re
 import logging
 from datetime import datetime
 from telethon import TelegramClient, events
+from telethon.sessions import StringSession
 from telethon.tl.types import KeyboardButtonCallback
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -263,7 +264,7 @@ async def send_stats(client, chat_id):
 
 # ─── MAIN LOOP ─────────────────────────────────────────────────────────────────
 async def main():
-    client = TelegramClient("session", API_ID, API_HASH)
+    client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
     await client.start()
     me = await client.get_me()
     logger.info(f"Logged in as: {me.username or me.id}")
